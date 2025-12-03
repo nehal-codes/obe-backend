@@ -1,0 +1,339 @@
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String      @id @default(cuid())
+  email        String      @unique
+  password     String
+  name         String
+  role         UserRole
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  isActive     Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  assignedCourses   FacultyCourseAssignment[]
+  createdCourses    Course[]
+  createdCLOs       CLO[]
+  attainmentReviews AttainmentReview[]
+  questions         QuestionBank[]
+
+  @@map("users")
+}
+
+model Department {
+  id          String   @id @default(cuid())
+  name        String
+  code        String   @unique
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  users   User[]
+  courses Course[]
+  po      PO[]
+  pso     PSO[]
+
+  @@map("departments")
+}
+
+model Course {
+  id           String  @id @default(cuid())
+  code         String  @unique
+  name         String
+  description  String?
+  credits      Int
+  category     String
+  version      String  @default("1.0")
+  isActive     Boolean @default(true)
+  departmentId String
+  createdById  String
+  threshold    Float   @default(50.0)
+
+  department  Department @relation(fields: [departmentId], references: [id])
+  createdBy   User       @relation(fields: [createdById], references: [id])
+  clos        CLO[]
+  assignments FacultyCourseAssignment[]
+  assessments Assessment[]
+
+  // ✅ FIX ADDED
+  questions QuestionBank[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("courses")
+}
+
+model CLO {
+  id          String     @id @default(cuid())
+  cloCode     String // CLO1, CLO2, etc.
+  description String
+  bloomLevel  BloomLevel
+  version     String     @default("1.0")
+  isActive    Boolean    @default(true)
+  courseId    String
+  createdById String
+
+  course      Course  @relation(fields: [courseId], references: [id])
+  createdBy   User    @relation(fields: [createdById], references: [id])
+  mappings    CLOPOPSOMapping[]
+  assessments AssessmentCLOMapping[]
+  attainments AttainmentRecord[]
+  questions   QuestionCLOMapping[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([cloCode, courseId, version])
+  @@map("clo")
+}
+
+model PO {
+  id           String  @id @default(cuid())
+  poCode       String
+  description  String
+  version      String  @default("1.0")
+  isActive     Boolean @default(true)
+  departmentId String
+
+  department Department        @relation(fields: [departmentId], references: [id])
+  mappings   CLOPOPSOMapping[]
+
+  // ✅ FIX ADDED
+  indirectAttainments SurveyIndirectAttainment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([poCode, departmentId, version])
+  @@map("po")
+}
+
+model PSO {
+  id           String  @id @default(cuid())
+  psoCode      String
+  description  String
+  version      String  @default("1.0")
+  isActive     Boolean @default(true)
+  departmentId String
+
+  department Department        @relation(fields: [departmentId], references: [id])
+  mappings   CLOPOPSOMapping[]
+
+  // ✅ FIX ADDED
+  indirectAttainments SurveyIndirectAttainment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([psoCode, departmentId, version])
+  @@map("pso")
+}
+
+model CLOPOPSOMapping {
+  id          String  @id @default(cuid())
+  cloId       String
+  poId        String?
+  psoId       String?
+  correlation Int // 0-3 scale
+  version     String  @default("1.0")
+
+  clo CLO  @relation(fields: [cloId], references: [id])
+  po  PO?  @relation(fields: [poId], references: [id], onDelete: SetNull)
+  pso PSO? @relation(fields: [psoId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("clo_po_pso_mapping")
+}
+
+model FacultyCourseAssignment {
+  id           String @id @default(cuid())
+  facultyId    String
+  courseId     String
+  semester     String
+  academicYear String
+
+  faculty User   @relation(fields: [facultyId], references: [id])
+  course  Course @relation(fields: [courseId], references: [id])
+
+  assignedAt DateTime @default(now())
+
+  @@unique([facultyId, courseId, semester, academicYear])
+  @@map("faculty_course_assign")
+}
+
+model Assessment {
+  id        String         @id @default(cuid())
+  name      String
+  type      AssessmentType
+  maxMarks  Float
+  weightage Float
+  courseId  String
+  createdAt DateTime       @default(now())
+
+  course      Course                 @relation(fields: [courseId], references: [id])
+  cloMappings AssessmentCLOMapping[]
+  attainments AttainmentRecord[]
+
+  @@map("assessments")
+}
+
+model AssessmentCLOMapping {
+  id           String @id @default(cuid())
+  assessmentId String
+  cloId        String
+  maxMarks     Float
+  weightage    Float
+
+  assessment Assessment @relation(fields: [assessmentId], references: [id])
+  clo        CLO        @relation(fields: [cloId], references: [id])
+
+  @@unique([assessmentId, cloId])
+  @@map("assessment_clo_mapping")
+}
+
+model AttainmentRecord {
+  id              String @id @default(cuid())
+  cloId           String
+  assessmentId    String
+  studentCount    Int
+  attainedCount   Int
+  attainmentLevel Int // 0-3
+  academicYear    String
+  semester        String
+
+  clo        CLO                @relation(fields: [cloId], references: [id])
+  assessment Assessment         @relation(fields: [assessmentId], references: [id])
+  reviews    AttainmentReview[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("attainment_records")
+}
+
+model AttainmentReview {
+  id           String       @id @default(cuid())
+  attainmentId String
+  reviewedById String
+  status       ReviewStatus
+  comments     String?
+
+  attainment AttainmentRecord @relation(fields: [attainmentId], references: [id])
+  reviewedBy User             @relation(fields: [reviewedById], references: [id])
+
+  reviewedAt DateTime @default(now())
+
+  @@map("attainment_reviews")
+}
+
+model QuestionBank {
+  id          String          @id @default(cuid())
+  question    String
+  type        QuestionType
+  difficulty  DifficultyLevel
+  marks       Float
+  courseId    String
+  createdById String
+  status      QuestionStatus  @default(PENDING)
+
+  course      Course               @relation(fields: [courseId], references: [id])
+  createdBy   User                 @relation(fields: [createdById], references: [id])
+  cloMappings QuestionCLOMapping[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("question_bank")
+}
+
+model QuestionCLOMapping {
+  id         String @id @default(cuid())
+  questionId String
+  cloId      String
+
+  question QuestionBank @relation(fields: [questionId], references: [id])
+  clo      CLO          @relation(fields: [cloId], references: [id])
+
+  @@unique([questionId, cloId])
+  @@map("question_clo_mapping")
+}
+
+model SurveyIndirectAttainment {
+  id            String  @id @default(cuid())
+  poId          String
+  psoId         String?
+  surveyType    String
+  responseLevel Int // 1-3 scale
+  academicYear  String
+  semester      String
+
+  po  PO  @relation(fields: [poId], references: [id])
+  pso PSO? @relation(fields: [psoId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@map("survey_indirect_attainment")
+}
+
+enum UserRole {
+  ADMIN
+  HOD
+  FACULTY
+  STUDENT
+}
+
+enum BloomLevel {
+  REMEMBER
+  UNDERSTAND
+  APPLY
+  ANALYZE
+  EVALUATE
+  CREATE
+}
+
+enum AssessmentType {
+  CA1
+  CA2
+  MID_EXAM
+  END_SEM_EXAM
+  PRACTICAL
+  VIVA
+  PROJECT
+}
+
+enum QuestionType {
+  MCQ
+  DESCRIPTIVE
+  PROGRAMMING
+  CASE_STUDY
+}
+
+enum DifficultyLevel {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum QuestionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
