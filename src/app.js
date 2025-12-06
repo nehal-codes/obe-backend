@@ -5,10 +5,10 @@ const { PrismaClient } = require('@prisma/client');
 
 
 
-
 const authRoutes = require('./routes/auth');
 const courseRoutes = require('./routes/courses');
 const cloRoutes = require('./routes/clos');
+const hodRoutes = require('./routes/hodroutes');
 // Import other routes...
 
 const prisma = new PrismaClient();
@@ -26,6 +26,7 @@ app.use((req, res, next) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/courses', courseRoutes);
 app.use('/api/clos', cloRoutes);
+app.use('/api/hod', hodRoutes);
 // Use other routes...
 
 
