@@ -249,7 +249,30 @@ module.exports.getCourses = async (req, res) => {
         },
       },
     });
+    console.log("COURSES =", courses);
+    res.json(courses);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
 
+module.exports.getAllCourses = async (req, res) => {
+  try {
+    const courses = await prisma.course.findMany({
+      where: {
+        departmentId: req.user.departmentId,
+      },
+      include: {
+        createdBy: { select: { name: true } },
+        clos: { where: { isActive: true } },
+        assignments: {
+          include: {
+            faculty: { select: { name: true } },
+          },
+        },
+      },
+    });
+    console.log("COURSES =", courses);
     res.json(courses);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -440,5 +463,47 @@ module.exports.getCLOMappings = async (req, res) => {
   } catch (error) {
     console.error("Error fetching mappings:", error);
     res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+//GET DASHBORAD STATS
+exports.getDashboardStats = async (req, res) => {
+  try {
+    const departmentId = req.user.departmentId;
+
+    // Count courses under HOD's department
+    const totalCourses = await prisma.course.count({
+      where: { departmentId, isActive: true },
+    });
+
+    // Count active CLOs under the department's courses
+    const activeCLOs = await prisma.cLO.count({
+      where: {
+        isActive: true,
+        course: { departmentId },
+      },
+    });
+
+    // Count Program Outcomes for this department
+    const programOutcomes = await prisma.pO.count({
+      where: { departmentId },
+    });
+
+    // Pending Reviews → Example logic (customize)
+    const pendingReviews = await prisma.attainmentReview
+      .count({
+        where: { status: "PENDING", departmentId },
+      })
+      .catch(() => 0); // if table not made yet
+
+    res.json({
+      totalCourses,
+      activeCLOs,
+      programOutcomes,
+      pendingReviews,
+    });
+  } catch (error) {
+    console.error("Dashboard stats error:", error);
+    res.status(500).json({ error: "Failed to load dashboard stats" });
   }
 };

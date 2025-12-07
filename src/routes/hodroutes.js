@@ -12,6 +12,7 @@ const {
   getFacultyWithCourses,
   createCourse,
   getCourses,
+  getAllCourses,
   getCourseById,
   updateCourse,
   deleteCourse,
@@ -20,6 +21,7 @@ const {
   updateCLO,
   mapCLOToPOPSO,
   getCLOMappings,
+  getDashboardStats,
 } = require("../controllers/hodController");
 
 const { authenticate } = require("../middleware/auth");
@@ -67,8 +69,11 @@ router.delete("/faculty/remove-course", authenticate, removeCourseFromFaculty);
 // Create course
 router.post("/course", authenticate, createCourse);
 
-// Get all courses
+// Get active courses
 router.get("/courses", authenticate, getCourses);
+
+//Get all courses
+router.get("/all-courses", authenticate, getAllCourses);
 
 // Get course by ID
 router.get("/course/:id", authenticate, getCourseById);
@@ -93,5 +98,8 @@ router.post("/clo/map", authenticate, mapCLOToPOPSO);
 
 // Get CLO mappings for a course
 router.get("/clo/mappings/:courseId", authenticate, getCLOMappings);
+
+//GET DASHBOARD STATS
+router.get("/dashboard/stats", authenticate, getDashboardStats);
 
 module.exports = router;
