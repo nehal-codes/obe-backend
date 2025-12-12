@@ -1,3 +1,6 @@
+// controllers/courseFacultyController.js
+// (updated to support Programmes and new schema relations)
+
 const { PrismaClient } = require("@prisma/client");
 const bcrypt = require("bcryptjs");
 
@@ -22,6 +25,14 @@ module.exports.createFaculty = async (req, res) => {
   try {
     const { name, email, password, departmentId } = req.body;
 
+    // validate department exists (optional but safer)
+    if (departmentId) {
+      const dept = await prisma.department.findUnique({ where: { id: departmentId } });
+      if (!dept) {
+        return res.status(400).json({ error: "Invalid departmentId" });
+      }
+    }
+
     const hashedPassword = await bcrypt.hash(password, 12);
 
     const newFaculty = await prisma.user.create({
@@ -29,14 +40,19 @@ module.exports.createFaculty = async (req, res) => {
         name,
         email,
         password: hashedPassword,
-        departmentId,
+        departmentId: departmentId || null,
         role: "FACULTY",
       },
+      include: { department: true },
     });
 
     res.status(201).json(newFaculty);
   } catch (error) {
     console.error("Error creating faculty member: ", error);
+    // handle unique email case
+    if (error.code === "P2002") {
+      return res.status(400).json({ error: "Email already exists" });
+    }
     res.status(500).json({ error: "Internal server error" });
   }
 };
@@ -47,14 +63,24 @@ module.exports.updateFaculty = async (req, res) => {
     const { id } = req.params;
     const { name, email, departmentId } = req.body;
 
+    // optional validation of department
+    if (departmentId) {
+      const dept = await prisma.department.findUnique({ where: { id: departmentId } });
+      if (!dept) return res.status(400).json({ error: "Invalid departmentId" });
+    }
+
     const updatedFaculty = await prisma.user.update({
       where: { id },
       data: { name, email, departmentId },
+      include: { department: true },
     });
 
     res.status(200).json(updatedFaculty);
   } catch (error) {
     console.error("Error updating faculty:", error);
+    if (error.code === "P2025") {
+      return res.status(404).json({ error: "Faculty not found" });
+    }
     res.status(500).json({ error: "Internal server error" });
   }
 };
@@ -69,9 +95,13 @@ module.exports.deleteFaculty = async (req, res) => {
     res.status(200).json({ message: "Faculty deleted successfully" });
   } catch (error) {
     console.error("Error deleting faculty:", error);
+    if (error.code === "P2025") {
+      return res.status(404).json({ error: "Faculty not found" });
+    }
     res.status(500).json({ error: "Internal server error" });
   }
 };
+
 // GET FACULTY BY ID
 module.exports.getFacultyById = async (req, res) => {
   try {
@@ -81,6 +111,8 @@ module.exports.getFacultyById = async (req, res) => {
       where: { id },
       include: { department: true },
     });
+
+    if (!faculty) return res.status(404).json({ error: "Faculty not found" });
 
     res.status(200).json(faculty);
   } catch (error) {
@@ -99,6 +131,7 @@ module.exports.getFacultyByDepartment = async (req, res) => {
         role: "FACULTY",
         departmentId,
       },
+      include: { department: true },
     });
 
     res.status(200).json(faculty);
@@ -124,14 +157,15 @@ module.exports.assignCourseToFaculty = async (req, res) => {
 
     const course = await prisma.course.findUnique({
       where: { id: courseId },
-      include: { department: true },
+      include: { department: true, programme: true },
     });
 
     if (!course) {
       return res.status(404).json({ error: "Course not found" });
     }
 
-    if (faculty.departmentId !== course.departmentId) {
+    // ensure faculty and course belong to same department
+    if (faculty.departmentId && course.departmentId && faculty.departmentId !== course.departmentId) {
       return res.status(400).json({
         error: "Faculty and Course must belong to the same department",
       });
@@ -160,7 +194,7 @@ module.exports.getCoursesByFaculty = async (req, res) => {
 
     const courses = await prisma.facultyCourseAssignment.findMany({
       where: { facultyId },
-      include: { course: true },
+      include: { course: { include: { programme: true, createdBy: { select: { name: true } } } } },
     });
 
     res.status(200).json(courses);
@@ -194,9 +228,11 @@ module.exports.getFacultyWithCourses = async (req, res) => {
     const faculty = await prisma.user.findUnique({
       where: { id },
       include: {
-        assignedCourses: { include: { course: true } },
+        assignedCourses: { include: { course: { include: { programme: true } } } },
       },
     });
+
+    if (!faculty) return res.status(404).json({ error: "Faculty not found" });
 
     res.status(200).json(faculty);
   } catch (error) {
@@ -205,11 +241,32 @@ module.exports.getFacultyWithCourses = async (req, res) => {
   }
 };
 
-//CREATE COURSE
+// CREATE COURSE
 module.exports.createCourse = async (req, res) => {
   try {
-    const { code, name, description, credits, category, version, threshold } =
-      req.body;
+    const {
+      code,
+      name,
+      description,
+      credits,
+      category,
+      version,
+      threshold,
+      programmeId,
+    } = req.body;
+
+    // require programmeId (recommended) and validate it belongs to the same department
+    if (!programmeId) {
+      return res.status(400).json({ error: "programmeId is required" });
+    }
+
+    const programme = await prisma.programme.findUnique({ where: { id: programmeId } });
+    if (!programme) return res.status(400).json({ error: "Invalid programmeId" });
+
+    // ensure programme belongs to req.user.departmentId
+    if (req.user?.departmentId && programme.departmentId !== req.user.departmentId) {
+      return res.status(400).json({ error: "Programme does not belong to your department" });
+    }
 
     const course = await prisma.course.create({
       data: {
@@ -220,18 +277,28 @@ module.exports.createCourse = async (req, res) => {
         category,
         version,
         threshold: parseFloat(threshold),
-        departmentId: req.user.departmentId,
+        departmentId: req.user.departmentId, // keep department in sync
+        programmeId,
         createdById: req.user.id,
+      },
+      include: {
+        programme: true,
+        createdBy: { select: { name: true } },
       },
     });
 
     res.status(201).json(course);
   } catch (error) {
+    console.error("Create course error:", error);
+    // duplicate code
+    if (error.code === "P2002") {
+      return res.status(400).json({ error: "Course code already exists" });
+    }
     res.status(400).json({ error: error.message });
   }
 };
 
-//GET COURSES
+// GET COURSES (active courses in user's department)
 module.exports.getCourses = async (req, res) => {
   try {
     const courses = await prisma.course.findMany({
@@ -241,6 +308,7 @@ module.exports.getCourses = async (req, res) => {
       },
       include: {
         createdBy: { select: { name: true } },
+        programme: true,
         clos: { where: { isActive: true } },
         assignments: {
           include: {
@@ -249,9 +317,9 @@ module.exports.getCourses = async (req, res) => {
         },
       },
     });
-    console.log("COURSES =", courses);
     res.json(courses);
   } catch (error) {
+    console.error("getCourses error:", error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -264,6 +332,7 @@ module.exports.getAllCourses = async (req, res) => {
       },
       include: {
         createdBy: { select: { name: true } },
+        programme: true,
         clos: { where: { isActive: true } },
         assignments: {
           include: {
@@ -272,14 +341,14 @@ module.exports.getAllCourses = async (req, res) => {
         },
       },
     });
-    console.log("COURSES =", courses);
     res.json(courses);
   } catch (error) {
+    console.error("getAllCourses error:", error);
     res.status(500).json({ error: error.message });
   }
 };
 
-//GET COURSE BY ID
+// GET COURSE BY ID
 module.exports.getCourseById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -287,6 +356,7 @@ module.exports.getCourseById = async (req, res) => {
       where: { id },
       include: {
         createdBy: { select: { name: true } },
+        programme: true,
         clos: { where: { isActive: true } },
         assignments: {
           include: {
@@ -295,30 +365,50 @@ module.exports.getCourseById = async (req, res) => {
         },
       },
     });
+
+    if (!course) return res.status(404).json({ error: "Course not found" });
+
     res.json(course);
   } catch (error) {
+    console.error("getCourseById error:", error);
     res.status(500).json({ error: error.message });
   }
 };
 
-//UPDATE COURSE
+// UPDATE COURSE
 module.exports.updateCourse = async (req, res) => {
   try {
     const { id } = req.params;
     const updates = req.body;
+
+    // if programmeId provided, validate it
+    if (updates.programmeId) {
+      const programme = await prisma.programme.findUnique({ where: { id: updates.programmeId } });
+      if (!programme) return res.status(400).json({ error: "Invalid programmeId" });
+
+      // ensure programme belongs to same department (if req.user.departmentId exists)
+      if (req.user?.departmentId && programme.departmentId !== req.user.departmentId) {
+        return res.status(400).json({ error: "Programme does not belong to your department" });
+      }
+    }
+
     const updatedCourse = await prisma.course.update({
       where: { id },
       data: updates,
+      include: { programme: true },
     });
 
     res.status(200).json(updatedCourse);
   } catch (error) {
     console.error("Error updating course:", error);
+    if (error.code === "P2025") {
+      return res.status(404).json({ error: "Course not found" });
+    }
     res.status(500).json({ error: error.message });
   }
 };
 
-//DELETE COURSE
+// DELETE COURSE (soft delete)
 module.exports.deleteCourse = async (req, res) => {
   try {
     const { id } = req.params;
@@ -334,10 +424,18 @@ module.exports.deleteCourse = async (req, res) => {
   }
 };
 
-//CREATE CLO
+// CREATE CLO
 module.exports.createCLO = async (req, res) => {
   try {
     const { cloCode, description, bloomLevel, version, courseId } = req.body;
+
+    // validate course exists and belongs to user's department
+    const course = await prisma.course.findUnique({ where: { id: courseId } });
+    if (!course) return res.status(400).json({ error: "Invalid courseId" });
+    if (req.user?.departmentId && course.departmentId !== req.user.departmentId) {
+      return res.status(403).json({ error: "Course does not belong to your department" });
+    }
+
     const clo = await prisma.cLO.create({
       data: {
         cloCode,
@@ -360,11 +458,12 @@ module.exports.createCLO = async (req, res) => {
 
     res.status(201).json(clo);
   } catch (error) {
+    console.error("createCLO error:", error);
     res.status(400).json({ error: error.message });
   }
 };
 
-//UPDATE CLO
+// UPDATE CLO
 module.exports.updateCLO = async (req, res) => {
   try {
     const { id } = req.params;
@@ -385,11 +484,12 @@ module.exports.updateCLO = async (req, res) => {
 
     res.json(clo);
   } catch (error) {
+    console.error("updateCLO error:", error);
     res.status(400).json({ error: error.message });
   }
 };
 
-//GET CLOs BY COURSE
+// GET CLOs BY COURSE
 module.exports.getCLOsByCourse = async (req, res) => {
   try {
     const { courseId } = req.params;
@@ -405,16 +505,17 @@ module.exports.getCLOsByCourse = async (req, res) => {
             pso: true,
           },
         },
-        course: true,
+        course: { include: { programme: true } },
       },
     });
     res.json(clos);
   } catch (error) {
+    console.error("getCLOsByCourse error:", error);
     res.status(500).json({ error: error.message });
   }
 };
 
-//MAP CLO TO PO/PSO
+// MAP CLO TO PO/PSO
 module.exports.mapCLOToPOPSO = async (req, res) => {
   try {
     const { cloId, poId, psoId, correlation, version } = req.body;
@@ -447,7 +548,7 @@ module.exports.mapCLOToPOPSO = async (req, res) => {
   }
 };
 
-//GET CLO-PO/PSO MAPPINGS BY COURSE
+// GET CLO-PO/PSO MAPPINGS BY COURSE
 module.exports.getCLOMappings = async (req, res) => {
   try {
     const { courseId } = req.params;
@@ -466,7 +567,7 @@ module.exports.getCLOMappings = async (req, res) => {
   }
 };
 
-//GET DASHBORAD STATS
+// GET DASHBOARD STATS
 exports.getDashboardStats = async (req, res) => {
   try {
     const departmentId = req.user.departmentId;
@@ -484,23 +585,36 @@ exports.getDashboardStats = async (req, res) => {
       },
     });
 
+    // Count Programmes for this department
+    const programmesCount = await prisma.programme.count({
+      where: { departmentId },
+    });
+
     // Count Program Outcomes for this department
     const programOutcomes = await prisma.pO.count({
       where: { departmentId },
     });
 
-    // Pending Reviews → Example logic (customize)
-    const pendingReviews = await prisma.attainmentReview
-      .count({
-        where: { status: "PENDING", departmentId },
-      })
-      .catch(() => 0); // if table not made yet
+    // Pending Reviews → count attainment reviews whose attainment -> clo -> course -> departmentId matches
+    const pendingReviews = await prisma.attainmentReview.count({
+      where: {
+        status: "PENDING",
+        attainment: {
+          clo: {
+            course: {
+              departmentId,
+            },
+          },
+        },
+      },
+    }).catch(() => 0);
 
     res.json({
       totalCourses,
       activeCLOs,
       programOutcomes,
       pendingReviews,
+      programmesCount,
     });
   } catch (error) {
     console.error("Dashboard stats error:", error);

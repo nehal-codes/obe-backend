@@ -88,6 +88,62 @@ async function main() {
       }
     });
   }
+  
+  const bsc = await prisma.programme.upsert({
+  where: { code: "BSC-CSE" },
+  update: {},
+  create: {
+    name: "B.Sc Computer Science",
+    code: "BSC-CSE",
+    description: "Undergraduate Programme",
+    departmentId: csDept.id
+  }
+});
+
+const msc = await prisma.programme.upsert({
+  where: { code: "MSC-CSE" },
+  update: {},
+  create: {
+    name: "M.Sc Computer Science",
+    code: "MSC-CSE",
+    description: "Postgraduate Programme",
+    departmentId: csDept.id
+  }
+});
+
+const bvoc = await prisma.programme.upsert({
+  where: { code: "BVOC-CSE" },
+  update: {},
+  create: {
+    name: "B.Voc Software Development",
+    code: "BVOC-CSE",
+    description: "Vocational Programme",
+    departmentId: csDept.id
+  }
+});
+await prisma.course.create({
+  data: {
+    code: "CS101",
+    name: "Introduction to Programming",
+    credits: 4,
+    category: "Core",
+    departmentId: csDept.id,
+    programmeId: bsc.id,       // 🔥 LINKED TO PROGRAMME
+    createdById: admin.id
+  }
+});
+
+await prisma.course.create({
+  data: {
+    code: "CS501",
+    name: "Advanced Machine Learning",
+    credits: 4,
+    category: "Core",
+    departmentId: csDept.id,
+    programmeId: msc.id,       // 🔥 LINKED TO MSC
+    createdById: hod.id
+  }
+});
 
   // Create PSOs
   const psos = [
